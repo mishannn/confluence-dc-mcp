@@ -25,6 +25,60 @@ set +a
 uv run confluence-dc-mcp
 ```
 
+## Run with uvx
+
+After the package is published, it can be run without cloning the repository:
+
+```bash
+CONFLUENCE_BASE_URL="https://confluence.example.com" \
+CONFLUENCE_PAT="replace-with-token" \
+uvx confluence-dc-mcp
+```
+
+Or with username/password authentication:
+
+```bash
+CONFLUENCE_BASE_URL="https://confluence.example.com" \
+CONFLUENCE_USERNAME="alice" \
+CONFLUENCE_PASSWORD="replace-with-password" \
+uvx confluence-dc-mcp
+```
+
+For an MCP client using `uvx` with a Personal Access Token:
+
+```json
+{
+  "mcpServers": {
+    "confluence-data-center": {
+      "command": "uvx",
+      "args": ["confluence-dc-mcp"],
+      "env": {
+        "CONFLUENCE_BASE_URL": "https://confluence.example.com",
+        "CONFLUENCE_PAT": "replace-with-token"
+      }
+    }
+  }
+}
+```
+
+For an MCP client using `uvx` with username/password authentication:
+
+```json
+{
+  "mcpServers": {
+    "confluence-data-center": {
+      "command": "uvx",
+      "args": ["confluence-dc-mcp"],
+      "env": {
+        "CONFLUENCE_BASE_URL": "https://confluence.example.com",
+        "CONFLUENCE_USERNAME": "alice",
+        "CONFLUENCE_PASSWORD": "replace-with-password"
+      }
+    }
+  }
+}
+```
+
 For MCP clients that pass environment variables directly, use:
 
 ```json

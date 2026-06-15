@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import TypedDict
-
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from typing_extensions import TypedDict
 
 from confluence_dc_mcp.client import (
     ConfluenceDataCenterClient,

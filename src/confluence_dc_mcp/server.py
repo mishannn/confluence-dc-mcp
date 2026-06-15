@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from confluence_dc_mcp.client import (
     ConfluenceDataCenterClient,
@@ -45,22 +46,35 @@ class HealthResult(TypedDict):
 mcp = FastMCP("confluence-data-center")
 _client: ConfluenceDataCenterClient | None = None
 
+READ_ONLY_TOOL = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+WRITE_TOOL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
 
-@mcp.tool()
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
 async def get_page_storage(page_id: str) -> PageStorageResult:
     """Return a Confluence page's raw storage-format XHTML by content ID."""
     page = await _get_client().get_page(page_id)
     return _page_storage_result(page)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 async def get_page_storage_by_title(space_key: str, title: str) -> PageStorageResult:
     """Return raw storage-format XHTML for the uniquely matching page title in a space."""
     page = await _get_client().find_page_by_title(space_key, title)
     return _page_storage_result(page)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 async def search_pages(cql: str, limit: int = 10, start: int = 0) -> list[PageSummaryResult]:
     """Search Confluence content with CQL and return page summaries."""
     normalized_limit = _bounded_int(limit, minimum=1, maximum=50, name="limit")
@@ -69,7 +83,7 @@ async def search_pages(cql: str, limit: int = 10, start: int = 0) -> list[PageSu
     return [_page_summary_result(page) for page in pages]
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE_TOOL)
 async def update_page_storage(
     page_id: str,
     storage: str,
@@ -88,7 +102,7 @@ async def update_page_storage(
     return _page_update_result(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_TOOL)
 async def health_check() -> HealthResult:
     """Confirm that the MCP server can load Confluence configuration."""
     config = load_config()
@@ -144,4 +158,3 @@ def _bounded_int(value: int, *, minimum: int, maximum: int, name: str) -> int:
 
 if __name__ == "__main__":
     main()
-

@@ -121,6 +121,9 @@ Optional settings:
 - `search_pages`: searches content with CQL and returns page summaries.
 - `get_page_storage`: returns raw storage-format XHTML for a content ID.
 - `get_page_storage_by_title`: returns raw storage-format XHTML for a unique page title in a space.
+- `get_page_children`: returns direct child page summaries for a content ID.
+- `get_attachment_list`: returns attachment metadata for a page content ID.
+- `download_attachment`: downloads an attachment as an embedded MCP resource for LLM analysis.
 - `update_page_storage`: replaces raw storage-format XHTML and increments the Confluence version.
 
 ## Development

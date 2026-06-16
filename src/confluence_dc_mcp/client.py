@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
@@ -14,6 +15,12 @@ class SpaceRef(TypedDict):
 
 class VersionRef(TypedDict):
     number: int
+
+
+class LinkRef(TypedDict, total=False):
+    base: str
+    download: str
+    webui: str
 
 
 class BodyValue(TypedDict):
@@ -32,6 +39,9 @@ class ContentResponse(TypedDict):
     space: NotRequired[SpaceRef]
     version: NotRequired[VersionRef]
     body: NotRequired[BodyStorage]
+    metadata: NotRequired[dict[str, Any]]
+    extensions: NotRequired[dict[str, Any]]
+    _links: NotRequired[LinkRef]
 
 
 class SearchResponse(TypedDict):
@@ -66,6 +76,24 @@ class PageUpdateResult:
     title: str
     type: str
     version: int
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentSummary:
+    id: str
+    title: str
+    media_type: str | None
+    file_size: int | None
+    version: int | None
+    download_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedAttachment:
+    id: str
+    title: str
+    media_type: str
+    data_base64: str
 
 
 class ConfluenceDataCenterClient:
@@ -126,6 +154,47 @@ class ConfluenceDataCenterClient:
         )
         response = _as_search_response(data)
         return [_page_summary_from_response(item) for item in response["results"]]
+
+    async def get_page_children(
+        self, page_id: str, limit: int = 25, start: int = 0
+    ) -> list[PageSummary]:
+        data = await self._request_json(
+            "GET",
+            f"/rest/api/content/{page_id}/child/page",
+            params={"limit": limit, "start": start, "expand": "space,version"},
+        )
+        response = _as_search_response(data)
+        return [_page_summary_from_response(item) for item in response["results"]]
+
+    async def get_attachment_list(
+        self, page_id: str, limit: int = 25, start: int = 0
+    ) -> list[AttachmentSummary]:
+        data = await self._request_json(
+            "GET",
+            f"/rest/api/content/{page_id}/child/attachment",
+            params={
+                "limit": limit,
+                "start": start,
+                "expand": "version,metadata,extensions",
+            },
+        )
+        response = _as_search_response(data)
+        return [_attachment_summary_from_response(item) for item in response["results"]]
+
+    async def download_attachment(self, attachment_id: str) -> DownloadedAttachment:
+        metadata = await self._get_attachment_metadata(attachment_id)
+        download_url = _attachment_download_url(metadata)
+        if download_url is None:
+            raise ConfluenceError("Confluence attachment response did not include a download URL.")
+
+        data = await self._request_bytes("GET", download_url)
+        media_type = _attachment_media_type(metadata) or "application/octet-stream"
+        return DownloadedAttachment(
+            id=metadata["id"],
+            title=metadata["title"],
+            media_type=media_type,
+            data_base64=base64.b64encode(data).decode("ascii"),
+        )
 
     async def update_storage(
         self,
@@ -188,6 +257,39 @@ class ConfluenceDataCenterClient:
 
         return response.json()
 
+    async def _request_bytes(
+        self,
+        method: Literal["GET"],
+        url: str,
+        *,
+        params: dict[str, str | int] | None = None,
+    ) -> bytes:
+        try:
+            response = await self._client.request(
+                method,
+                url,
+                params=params,
+                headers={"Accept": "*/*"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise _error_from_response(exc.response) from exc
+        except httpx.HTTPError as exc:
+            raise ConfluenceError(f"Confluence request failed: {exc}") from exc
+
+        return response.content
+
+    async def _get_attachment_metadata(self, attachment_id: str) -> ContentResponse:
+        data = await self._request_json(
+            "GET",
+            f"/rest/api/content/{attachment_id}",
+            params={"expand": "version,metadata,extensions"},
+        )
+        metadata = _as_content_response(data)
+        if metadata["type"] != "attachment":
+            raise ConfluenceError(f"Content {attachment_id!r} is not an attachment.")
+        return metadata
+
 
 class ConfluenceError(RuntimeError):
     pass
@@ -227,6 +329,53 @@ def _page_storage_from_response(data: ContentResponse) -> PageStorage:
         version=version,
         storage=storage["value"],
     )
+
+
+def _attachment_summary_from_response(data: ContentResponse) -> AttachmentSummary:
+    return AttachmentSummary(
+        id=data["id"],
+        title=data["title"],
+        media_type=_attachment_media_type(data),
+        file_size=_attachment_file_size(data),
+        version=_version_number(data),
+        download_url=_attachment_download_url(data),
+    )
+
+
+def _attachment_media_type(data: ContentResponse) -> str | None:
+    metadata = data.get("metadata")
+    if metadata is not None:
+        value = metadata.get("mediaType")
+        if isinstance(value, str):
+            return value
+
+    extensions = data.get("extensions")
+    if extensions is not None:
+        value = extensions.get("mediaType")
+        if isinstance(value, str):
+            return value
+
+    return None
+
+
+def _attachment_file_size(data: ContentResponse) -> int | None:
+    extensions = data.get("extensions")
+    if extensions is None:
+        return None
+    value = extensions.get("fileSize")
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _attachment_download_url(data: ContentResponse) -> str | None:
+    links = data.get("_links")
+    if links is None:
+        return None
+    value = links.get("download")
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _space_key(data: ContentResponse) -> str | None:

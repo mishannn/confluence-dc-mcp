@@ -13,6 +13,9 @@ def test_tool_annotations_identify_read_and_write_tools() -> None:
             "get_page_storage",
             "get_page_storage_by_title",
             "search_pages",
+            "get_page_children",
+            "get_attachment_list",
+            "download_attachment",
             "health_check",
         ):
             annotations = tools[name].annotations

@@ -122,8 +122,21 @@ Optional settings:
 - `get_page_storage`: returns raw storage-format XHTML for a content ID.
 - `get_page_storage_by_title`: returns raw storage-format XHTML for a unique page title in a space.
 - `get_page_children`: returns direct child page summaries for a content ID.
+- `get_page_history`: returns page version history entries for a content ID.
+- `create_page`: creates a page from raw storage-format XHTML.
+- `move_page`: moves a page before, after, or under a target page.
+- `get_comments`: returns page comments with storage-format bodies.
+- `add_comment`: adds a storage-format comment to a page.
+- `reply_to_comment`: replies to an existing comment with storage-format XHTML.
+- `get_labels`: returns labels for a content ID.
+- `add_label`: adds a label to a content ID.
+- `search_user`: searches Confluence users through CQL-backed site search.
 - `get_attachment_list`: returns attachment metadata for a page content ID.
 - `download_attachment`: downloads an attachment as an embedded MCP resource for LLM analysis.
+- `upload_attachment`: uploads a local file as a page attachment.
+- `upload_attachments`: uploads multiple local files as page attachments.
+- `download_attachment_to_file`: downloads an attachment to a local file path.
+- `get_page_images`: downloads image attachments from a page as embedded MCP resources.
 - `update_page_storage`: replaces raw storage-format XHTML and increments the Confluence version.
 
 ## Development

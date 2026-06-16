@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -132,6 +133,215 @@ def test_get_page_children_maps_page_summaries() -> None:
     asyncio.run(run())
 
 
+def test_get_page_history_maps_versions() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/rest/api/content/123/version"
+        assert "expand=by" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "number": 7,
+                        "by": {"username": "alice", "displayName": "Alice"},
+                        "when": "2026-01-01T10:00:00.000Z",
+                        "message": "Updated",
+                        "minorEdit": True,
+                    }
+                ],
+                "size": 1,
+                "limit": 25,
+                "start": 0,
+            },
+        )
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            history = await client.get_page_history("123")
+        finally:
+            await client.close()
+
+        assert len(history) == 1
+        assert history[0].number == 7
+        assert history[0].by_username == "alice"
+        assert history[0].by_display_name == "Alice"
+        assert history[0].minor_edit is True
+
+    asyncio.run(run())
+
+
+def test_create_page_posts_storage_payload_with_optional_parent() -> None:
+    seen_payloads: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/rest/api/content"
+        payload = _json_body(request)
+        seen_payloads.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "id": "456",
+                "type": "page",
+                "title": payload["title"],
+                "version": {"number": 1},
+            },
+        )
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            result = await client.create_page("ENG", "New page", "<p>Body</p>", parent_id="123")
+        finally:
+            await client.close()
+
+        assert result.id == "456"
+        assert result.version == 1
+
+    asyncio.run(run())
+
+    assert seen_payloads[0]["space"] == {"key": "ENG"}
+    assert seen_payloads[0]["ancestors"] == [{"id": "123"}]
+    assert seen_payloads[0]["body"]["storage"]["value"] == "<p>Body</p>"
+
+
+def test_move_page_uses_relative_move_endpoint() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PUT"
+        assert request.url.path == "/rest/api/content/123/move/append/456"
+        return httpx.Response(200)
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            result = await client.move_page("123", "456")
+        finally:
+            await client.close()
+
+        assert result.moved is True
+        assert result.position == "append"
+
+    asyncio.run(run())
+
+
+def test_comments_can_be_listed_added_and_replied_to() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            assert request.url.path == "/rest/api/content/123/child/comment"
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "c1",
+                            "type": "comment",
+                            "title": "Re: Roadmap",
+                            "container": {"id": "123", "type": "page"},
+                            "version": {"number": 2},
+                            "body": {
+                                "storage": {
+                                    "value": "<p>Existing</p>",
+                                    "representation": "storage",
+                                }
+                            },
+                        }
+                    ],
+                    "size": 1,
+                    "limit": 25,
+                    "start": 0,
+                },
+            )
+
+        payload = _json_body(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "c2",
+                "type": "comment",
+                "title": "Re: Roadmap",
+                "container": payload["container"],
+                "version": {"number": 1},
+                "body": payload["body"],
+            },
+        )
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            comments = await client.get_comments("123")
+            added = await client.add_comment("123", "<p>Added</p>")
+            reply = await client.reply_to_comment("c1", "<p>Reply</p>")
+        finally:
+            await client.close()
+
+        assert comments[0].storage == "<p>Existing</p>"
+        assert added.container_id == "123"
+        assert reply.container_id == "c1"
+
+    asyncio.run(run())
+
+    add_payload = _json_body(requests[1])
+    reply_payload = _json_body(requests[2])
+    assert add_payload["container"] == {"id": "123", "type": "page"}
+    assert reply_payload["container"] == {"id": "c1", "type": "comment"}
+
+
+def test_labels_and_user_search_are_mapped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/rest/api/content/123/label":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "l1", "name": "roadmap", "prefix": "global"}],
+                    "size": 1,
+                    "limit": 25,
+                    "start": 0,
+                },
+            )
+        if request.method == "POST":
+            assert request.url.path == "/rest/api/content/123/label"
+            parsed = httpx.Response(200, content=request.read()).json()
+            assert parsed == [{"prefix": "global", "name": "new-label"}]
+            return httpx.Response(
+                200,
+                json=[{"id": "l2", "name": "new-label", "prefix": "global"}],
+            )
+
+        assert request.method == "GET"
+        assert request.url.path == "/rest/api/search"
+        assert "type+%3D+user" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"title": "Alice", "url": "/display/~alice", "excerpt": "Alice"}],
+                "size": 1,
+                "limit": 10,
+                "start": 0,
+            },
+        )
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            labels = await client.get_labels("123")
+            added = await client.add_label("123", "new-label")
+            users = await client.search_user("ali")
+        finally:
+            await client.close()
+
+        assert labels[0].name == "roadmap"
+        assert added[0].name == "new-label"
+        assert users[0].display_name == "Alice"
+        assert users[0].url == "/display/~alice"
+
+    asyncio.run(run())
+
+
 def test_get_attachment_list_maps_metadata() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
@@ -223,6 +433,116 @@ def test_download_attachment_fetches_metadata_then_downloads_base64_payload() ->
         "/download/attachments/123/report.pdf",
     ]
     assert requests[1].headers["accept"] == "*/*"
+
+
+def test_upload_attachment_posts_multipart_file(tmp_path: Path) -> None:
+    upload = tmp_path / "report.txt"
+    upload.write_text("report-body")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/rest/api/content/123/child/attachment"
+        assert request.headers["x-atlassian-token"] == "nocheck"
+        body = request.read()
+        assert b'name="comment"' in body
+        assert b"Upload report" in body
+        assert b'report-body' in body
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "789",
+                        "type": "attachment",
+                        "title": "report.txt",
+                        "version": {"number": 1},
+                        "metadata": {"mediaType": "text/plain"},
+                        "extensions": {"fileSize": 11},
+                    }
+                ]
+            },
+        )
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            attachment = await client.upload_attachment(
+                "123",
+                str(upload),
+                comment="Upload report",
+            )
+        finally:
+            await client.close()
+
+        assert attachment.id == "789"
+        assert attachment.media_type == "text/plain"
+
+    asyncio.run(run())
+
+
+def test_get_page_images_downloads_only_image_attachments() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/rest/api/content/123/child/attachment":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "img",
+                            "type": "attachment",
+                            "title": "diagram.png",
+                            "metadata": {"mediaType": "image/png"},
+                            "_links": {"download": "/download/diagram.png"},
+                        },
+                        {
+                            "id": "pdf",
+                            "type": "attachment",
+                            "title": "report.pdf",
+                            "metadata": {"mediaType": "application/pdf"},
+                            "_links": {"download": "/download/report.pdf"},
+                        },
+                    ],
+                    "size": 2,
+                    "limit": 50,
+                    "start": 0,
+                },
+            )
+        if request.url.path == "/rest/api/content/img":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "img",
+                    "type": "attachment",
+                    "title": "diagram.png",
+                    "metadata": {"mediaType": "image/png"},
+                    "_links": {"download": "/download/diagram.png"},
+                },
+            )
+
+        assert request.url.path == "/download/diagram.png"
+        return httpx.Response(200, content=b"png-data")
+
+    async def run() -> None:
+        client = ConfluenceDataCenterClient(_config(), transport=httpx.MockTransport(handler))
+        try:
+            images = await client.get_page_images("123")
+        finally:
+            await client.close()
+
+        assert len(images) == 1
+        assert images[0].id == "img"
+        assert images[0].data_base64 == "cG5nLWRhdGE="
+
+    asyncio.run(run())
+
+    assert [request.url.path for request in requests] == [
+        "/rest/api/content/123/child/attachment",
+        "/rest/api/content/img",
+        "/download/diagram.png",
+    ]
 
 
 def test_update_storage_increments_version_and_preserves_space() -> None:
